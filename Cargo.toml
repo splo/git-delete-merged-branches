@@ -1,0 +1,9 @@
+[package]
+name = "git-delete-merged-branches"
+version = "0.1.0"
+authors = ["Sébastien Job <sebastien.job@gmail.com>"]
+edition = "2018"
+license = "MIT"
+
+[dependencies]
+git2 = "0.13.1"
