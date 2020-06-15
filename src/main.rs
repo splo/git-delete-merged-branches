@@ -24,7 +24,7 @@ fn run() -> Result<(), git2::Error> {
         let branch_ref = branch.get();
         let branch_commit = repository.reference_to_annotated_commit(&branch_ref)?;
         let merge_base = repository.merge_base(main_branch_oid, branch_commit.id())?;
-        let is_merged = &merge_base == &branch_commit.id();
+        let is_merged = merge_base == branch_commit.id();
         if is_merged && !is_main_branch {
             merged_branch_names.push(branch_name);
         }
@@ -35,7 +35,7 @@ fn run() -> Result<(), git2::Error> {
         _ => "Do you want to delete the following branches?",
     };
     println!("{}", message);
-    if merged_branch_names.len() > 0 {
+    if !merged_branch_names.is_empty() {
         merged_branch_names
             .iter()
             .for_each(|name| println!("  {}", name));
@@ -61,7 +61,7 @@ fn find_main_branch<'a>(
         .map(|remote| {
             find_main_branch_name_from_remote(&repository.config().unwrap(), remote).unwrap()
         })
-        .unwrap_or(String::from("master"));
+        .unwrap_or_else(|| String::from("master"));
     let main_branch = repository.find_branch(main_branch_name.as_str(), BranchType::Local)?;
     Ok(main_branch)
 }
@@ -104,9 +104,8 @@ fn find_main_branch_name_from_remote(
     let rh = remote
         .list()?
         .iter()
-        .filter(|rh| rh.symref_target().is_some())
-        .next()
-        .ok_or(git2::Error::from_str("Could not find a remote head"))?;
+        .find(|rh| rh.symref_target().is_some())
+        .ok_or_else(|| git2::Error::from_str("Could not find a remote head"))?;
     let remote_symref_target = rh.symref_target().unwrap();
     let main_branch_name: String = remote_symref_target.chars().skip(11).collect();
     remote.disconnect()?;
@@ -114,18 +113,16 @@ fn find_main_branch_name_from_remote(
 }
 
 fn get_branch_name(branch: &Branch) -> Result<String, git2::Error> {
-    Ok(String::from(
-        branch
-            .name()?
-            .ok_or(git2::Error::from_str("Invalid branch name"))?,
-    ))
+    Ok(String::from(branch.name()?.ok_or_else(|| {
+        git2::Error::from_str("Invalid branch name")
+    })?))
 }
 
-fn delete_branch(repository: &Repository, name: &String) -> Result<(), git2::Error> {
+fn delete_branch(repository: &Repository, name: &str) -> Result<(), git2::Error> {
     for result in repository.branches(Some(BranchType::Local))? {
         let (mut branch, _) = result?;
         let branch_name = get_branch_name(&branch)?;
-        if name.as_str() == branch_name.as_str() {
+        if name == branch_name.as_str() {
             branch.delete()?
         }
     }

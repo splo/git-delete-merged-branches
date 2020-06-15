@@ -1,0 +1,152 @@
+name: Release
+
+# When pushing a tag name starting with `v`:
+# - Build archives containing the Linux, Windows and macOS compiled versions.
+# - Create a GitHub release with release notes and the archives.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  linux_build:
+    name: Build Linux version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v1
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Compile Linux version
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --verbose
+      - name: Get version
+        id: get_version
+        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\/v/}
+      - name: Package Linux archive
+        run: |
+          mkdir -p "./target/archive-linux-amd64/bin"
+          cp -v "./target/release/git-delete-merged-branches" "./target/archive-linux-amd64/bin/"
+          cd "./target/archive-linux-amd64"
+          tar cvzf "git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tgz" *
+      - name: Upload Linux archive
+        uses: actions/upload-artifact@v1
+        with:
+          name: linux_build
+          path: target/archive-linux-amd64/git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tgz
+
+  windows_build:
+    name: Build Windows version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v1
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Compile Windows version
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: true
+          command: build
+          args: --release --verbose --target=x86_64-pc-windows-gnu
+      - name: Get version
+        id: get_version
+        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\/v/}
+      - name: Package Windows archive
+        run: |
+          mkdir -p "./target/archive-windows-amd64"
+          cp -v "./target/x86_64-pc-windows-gnu/release/git-delete-merged-branches.exe" "./target/archive-windows-amd64/"
+          cd "./target/archive-windows-amd64"
+          zip "git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-windows-amd64.zip" *
+      - name: Upload Windows archive
+        uses: actions/upload-artifact@v1
+        with:
+          name: windows_build
+          path: target/archive-windows-amd64/git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-windows-amd64.zip
+
+  macos_build:
+    name: Build macOS version
+    runs-on: macOS-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v1
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Compile macOS Version
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --verbose
+      - name: Get version
+        id: get_version
+        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\/v/}
+      - name: Package macOS Archive
+        run: |
+          mkdir -p "./target/archive-darwin-amd64/bin"
+          cp -v "./target/release/git-delete-merged-branches" "./target/archive-darwin-amd64/bin/"
+          cd "./target/archive-darwin-amd64"
+          tar cvzf "git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-darwin-amd64.tgz" *
+      - name: Upload macOS Archive
+        uses: actions/upload-artifact@v1
+        with:
+          name: macos_build
+          path: target/archive-darwin-amd64/git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-darwin-amd64.tgz
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [linux_build, windows_build, macos_build]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v1
+      - name: Get version
+        id: get_version
+        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\/v/}
+      - name: Download Linux archive
+        uses: actions/download-artifact@v1
+        with:
+          name: linux_build
+          path: ./target/archive-linux-amd64/
+      - name: Download Windows archive
+        uses: actions/download-artifact@v1
+        with:
+          name: windows_build
+          path: ./target/archive-windows-amd64/
+      - name: Download macOS archive
+        uses: actions/download-artifact@v1
+        with:
+          name: macos_build
+          path: ./target/archive-darwin-amd64/
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            target/archive-linux-amd64/git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tgz
+            target/archive-windows-amd64/git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-windows-amd64.zip
+            target/archive-darwin-amd64/git-delete-merged-branches-${{ steps.get_version.outputs.VERSION }}-darwin-amd64.tgz
+      - name: Update Homebrew Formula
+        uses: izumin5210/action-homebrew-tap@v1.0.0
+        with:
+          tap: splo/homebrew-tap
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tap-token: ${{ secrets.TAP_GITHUB_TOKEN }}
