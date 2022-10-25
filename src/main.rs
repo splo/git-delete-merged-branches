@@ -1,34 +1,42 @@
 use git2::{
-    Branch, BranchType, Config, Cred, Direction, ProxyOptions, Remote, RemoteCallbacks, Repository,
+    Branch, BranchType, Config, Cred, Direction, ProxyOptions, Reference, Remote, RemoteCallbacks,
+    Repository,
 };
-use std::io;
-use std::io::BufRead;
+use std::io::{stdin, BufRead};
 
 fn main() {
-    match run() {
-        Ok(()) => (),
-        Err(e) => println!("Error: {}", e),
+    if let Some(err) = run().err() {
+        eprintln!("Error: {}", err)
     }
 }
 
 fn run() -> Result<(), git2::Error> {
     let repository = &Repository::open_from_env()?;
     let main_branch = find_main_branch(repository, None)?;
-    let mut merged_branch_names = Vec::new();
     let main_branch_oid = main_branch.get().target().unwrap();
-    let main_branch_name = get_branch_name(&main_branch)?;
-    for result in repository.branches(Some(BranchType::Local))? {
-        let (branch, _) = result?;
-        let branch_name = get_branch_name(&branch)?;
-        let is_main_branch = branch_name == main_branch_name;
-        let branch_ref = branch.get();
-        let branch_commit = repository.reference_to_annotated_commit(&branch_ref)?;
-        let merge_base = repository.merge_base(main_branch_oid, branch_commit.id())?;
-        let is_merged = merge_base == branch_commit.id();
-        if is_merged && !is_main_branch {
-            merged_branch_names.push(branch_name);
-        }
-    }
+    let main_branch_name = get_branch_name(main_branch.get())?;
+    let merged_branch_names: Vec<String> = repository
+        .branches(Some(BranchType::Local))?
+        .flatten()
+        .map(|(branch, _branch_type)| branch.into_reference())
+        .map(|branch_ref| (get_branch_name(&branch_ref).unwrap(), branch_ref))
+        // Filter out the main branch.
+        .filter(|(branch_name, _branch_ref)| *branch_name != main_branch_name)
+        // Get the branch commit id.
+        .flat_map(|(branch_name, branch_ref)| {
+            repository
+                .reference_to_annotated_commit(&branch_ref)
+                .map(|commit| (branch_name, commit.id()))
+        })
+        // Filter out unmerged branches.
+        .filter_map(|(branch_name, commit_id)| {
+            repository
+                .merge_base(main_branch_oid, commit_id)
+                .ok()
+                .filter(|&merge_base| merge_base == commit_id)
+                .map(|_| branch_name)
+        })
+        .collect();
     let message = match merged_branch_names.len() {
         std::usize::MIN..=0 => "No branch to delete",
         1 => "Do you want to delete this branch?",
@@ -39,13 +47,13 @@ fn run() -> Result<(), git2::Error> {
         merged_branch_names
             .iter()
             .for_each(|name| println!("  {}", name));
-        let input = io::stdin().lock().lines().next().unwrap().unwrap();
+        let input = stdin().lock().lines().next().unwrap().unwrap();
         if input.to_lowercase().as_str() == "y" {
             merged_branch_names
                 .iter()
                 .for_each(|name| match delete_branch(repository, name) {
                     Ok(()) => (),
-                    Err(e) => println!("Could not delete branch {}: {}", name, e),
+                    Err(e) => eprintln!("Could not delete branch {}: {}", name, e),
                 });
         }
     }
@@ -112,8 +120,8 @@ fn find_main_branch_name_from_remote(
     Ok(main_branch_name)
 }
 
-fn get_branch_name(branch: &Branch) -> Result<String, git2::Error> {
-    Ok(String::from(branch.name()?.ok_or_else(|| {
+fn get_branch_name(reference: &Reference) -> Result<String, git2::Error> {
+    Ok(String::from(reference.name().ok_or_else(|| {
         git2::Error::from_str("Invalid branch name")
     })?))
 }
@@ -121,7 +129,7 @@ fn get_branch_name(branch: &Branch) -> Result<String, git2::Error> {
 fn delete_branch(repository: &Repository, name: &str) -> Result<(), git2::Error> {
     for result in repository.branches(Some(BranchType::Local))? {
         let (mut branch, _) = result?;
-        let branch_name = get_branch_name(&branch)?;
+        let branch_name = get_branch_name(branch.get())?;
         if name == branch_name.as_str() {
             branch.delete()?
         }
