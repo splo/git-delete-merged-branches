@@ -1,0 +1,144 @@
+name: Build and upload Rust code
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: The operating system to run the job on and the artifact target ('linux', 'windows' or 'macos').
+        required: true
+        default: linux
+        type: string
+      arch:
+        description: The architecture of the target artifact ('x86' or 'arm').
+        required: true
+        default: x86
+        type: string
+    outputs:
+      artifact_name:
+        description: The key of the uploaded artifact containing the compiled code.
+        value: ${{ jobs.build.outputs.artifact_name }}
+      artifact_path:
+        description: The file path of the uploaded artifact containing the compiled code.
+        value: ${{ jobs.build.outputs.artifact_path }}
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - id: set_values
+        name: Set values
+        shell: bash
+        run: |
+          OS="${{ inputs.os }}"
+          ARCH="${{ inputs.arch }}"
+          REPO="${{ github.repository }}"
+          OWNER="${{ github.repository_owner }}"
+          TAG="${{ github.ref_name }}"
+
+          ART_REPO=${REPO#${OWNER}/}
+          ART_VERSION="${TAG#v}"
+          if [[ "${ARCH}" != "x86" && "${ARCH}" != "arm" ]]; then
+              echo "Invalid architecture name: ${ARCH}" >&2
+              exit 1
+          fi
+          if [[ "${ARCH}" == "arm" ]]; then
+              ARCH_NAME="ARM"
+              ART_ARCH="arm64"
+          else
+              ARCH_NAME="x86"
+              ART_ARCH="amd64"
+          fi
+          case "${OS}" in
+          linux)
+              RUNNER="ubuntu-latest"
+              OS_NAME="Linux"
+              TARGET_NAME="x86_64-unknown-linux-gnu"
+              EXEC_EXT=""
+              ART_OS="linux"
+              ART_EXT="tar.gz"
+              EXT_TYPE="tar"
+              ;;
+          windows)
+              RUNNER="windows-latest"
+              OS_NAME="Windows"
+              TARGET_NAME="x86_64-pc-windows-msvc"
+              EXEC_EXT=".exe"
+              ART_OS="windows"
+              ART_EXT="zip"
+              EXT_TYPE="zip"
+              ;;
+          macos)
+              RUNNER="macos-latest"
+              OS_NAME="macOS"
+              if [[ "${ARCH}" == "arm" ]]; then
+                  TARGET_NAME="aarch64-apple-darwin"
+              else
+                  TARGET_NAME="x86_64-apple-darwin"
+              fi
+              EXEC_EXT=""
+              ART_OS="darwin"
+              ART_EXT="tar.gz"
+              EXT_TYPE="tar"
+              ;;
+          *)
+              echo "Invalid OS name: ${OS}" >&2
+              exit 1
+              ;;
+          esac
+          EXEC_NAME=$(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[].targets[] | select(.kind[] | contains("bin")) | .name' |
+            head -n 1)
+
+          echo "runner=${RUNNER}" >> $GITHUB_OUTPUT
+          echo "variant_name=${OS_NAME} ${ARCH_NAME}" >> $GITHUB_OUTPUT
+          echo "target_name=${TARGET_NAME}" >> $GITHUB_OUTPUT
+          echo "artifact_path=${ART_REPO}-${ART_VERSION}-${ART_OS}-${ART_ARCH}.${ART_EXT}" >> $GITHUB_OUTPUT
+          echo "artifact_name=${OS}_${ARCH}" >> $GITHUB_OUTPUT
+          echo "archive_type=${EXT_TYPE}" >> $GITHUB_OUTPUT
+          echo "exec_filename=${EXEC_NAME}${EXEC_EXT}" >> $GITHUB_OUTPUT
+    outputs:
+      runner: ${{ steps.set_values.outputs.runner }}
+      variant_name: ${{ steps.set_values.outputs.variant_name }}
+      target_name: ${{ steps.set_values.outputs.target_name }}
+      artifact_path: ${{ steps.set_values.outputs.artifact_path }}
+      artifact_name: ${{ steps.set_values.outputs.artifact_name }}
+      archive_type: ${{ steps.set_values.outputs.archive_type }}
+      exec_filename: ${{ steps.set_values.outputs.exec_filename }}
+
+  build:
+    needs: setup
+    name: Build
+    runs-on: ${{ needs.setup.outputs.runner }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ needs.setup.outputs.target_name }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile ${{ needs.setup.outputs.variant_name }} target
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --verbose --target ${{ needs.setup.outputs.target_name }}
+      - name: Package ${{ needs.setup.outputs.variant_name }} archive
+        uses: TheDoctor0/zip-release@main
+        with:
+          directory: target/${{ needs.setup.outputs.target_name }}/release
+          filename: ../../../${{ needs.setup.outputs.artifact_path }}
+          path: ${{ needs.setup.outputs.exec_filename }}
+          type: ${{ needs.setup.outputs.archive_type }}
+      - name: Upload ${{ needs.setup.outputs.variant_name }} archive
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ needs.setup.outputs.artifact_name }}
+          path: ${{ needs.setup.outputs.artifact_path }}
+    outputs:
+      artifact_name: ${{ needs.setup.outputs.artifact_name }}
+      artifact_path: ${{ needs.setup.outputs.artifact_path }}
