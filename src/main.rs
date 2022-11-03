@@ -65,7 +65,7 @@ fn find_main_branch<'a>(
     name_opt: Option<&str>,
 ) -> Result<Branch<'a>, git2::Error> {
     let main_branch_name = find_remote(repository, name_opt)?
-        .map(|remote_name| repository.find_remote(&*remote_name).unwrap())
+        .map(|remote_name| repository.find_remote(&remote_name).unwrap())
         .map(|remote| {
             find_main_branch_name_from_remote(&repository.config().unwrap(), remote).unwrap()
         })
