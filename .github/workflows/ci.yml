@@ -5,10 +5,8 @@ name: Continuous Integration
 on:
   push:
     tags-ignore:
-      - "**"
+      - "v**"
   pull_request:
-    tags-ignore:
-      - "**"
 
 jobs:
   test:
