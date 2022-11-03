@@ -4,6 +4,8 @@ name: Continuous Integration
 
 on:
   push:
+    branches:
+      - "master"
     tags-ignore:
       - "v**"
   pull_request:
