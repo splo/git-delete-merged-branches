@@ -6,5 +6,5 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
-git2 = "0.15.0"
-openssl-sys = { version = "0.9.77", features = ["vendored"] }
+git2 = "0.18"
+openssl-sys = { version = "0.9", features = ["vendored"] }
